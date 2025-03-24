@@ -277,7 +277,15 @@ const handleOutgoingMessage = () => {
     setTimeout(displayLoadingAnimation, 500); // Show loading animation after delay
 };
 
+// Toggle between light and dark themes
+themeToggleButton.addEventListener('click', () => {
+    const isLightTheme = document.body.classList.toggle("light_mode");
+    localStorage.setItem("themeColor", isLightTheme ? "light_mode" : "dark_mode");
 
+    // Update icon based on theme
+    const newIconClass = isLightTheme ? "bx bx-moon" : "bx bx-sun";
+    themeToggleButton.querySelector("i").className = newIconClass;
+});
 
 // Clear all chat history
 clearChatButton.addEventListener('click', () => {
