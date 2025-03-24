@@ -291,7 +291,7 @@ clearChatButton.addEventListener('click', () => {
         isGeneratingResponse = false;
     }
 });
-
+ 
 // Handle click on suggestion items
 suggestionItems.forEach(suggestion => {
     suggestion.addEventListener('click', () => {
