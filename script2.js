@@ -163,7 +163,7 @@ const requestApiResponse = async (incomingMessageElement) => {
 **AI Response:** *"No investment is risk-free, and returns depend on market conditions. Diversification and strategic planning can help maximize gains while mitigating risks. Always conduct due diligence or consult a financial expert before making decisions."*
 
 **User:** *"Tell me a joke."*  
-**AI Response:** *"I specialize in investment advice. If you’d like insights on financial strategies, feel free to ask!"*
+**AI Response:** *"I specialize in investment advice. If you’d like insights on financial strategies, feel free to ask!"
 . ${currentUserMessage}` }] }]
             }),
         });
