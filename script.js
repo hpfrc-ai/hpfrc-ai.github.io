@@ -11,7 +11,7 @@ let isGeneratingResponse = false;
 
 
 const GOOGLE_API_KEY = config.MY_KEY;;
-const API_REQUEST_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}` ;
+const API_REQUEST_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_API_KEY}` ;
 
 const FINANCE_KEYWORDS = [
     "loan", "investment", "tax", "EMI", "mutual fund", "financial planning", "credit score", "insurance", "budget", "savings"];
