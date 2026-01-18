@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Adverse Media Risk</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- Tailwind (CDN) for quick styling; swap for your stack later -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Generative AI SDK (ESM) -->
+  <script type="module" crossorigin src="https://esm.run/@google/generative-ai"></script>
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-4xl mx-auto p-6 space-y-6">
+    <header class="space-y-2">
+      <h1 class="text-2xl font-bold">Adverse-Media Lending Risk Scorer | Demo </h1>
+      <p class="text-sm text-slate-600">Demo: Enter a public figure’s name, optionally paste fresh headlines, and compute a media risk score with explanations. 0 = Lowest Risk , 100 = Maximum Risk</p>
+    </header>
+
+    <!-- API + Model -->
+    
+
+    <!-- Query -->
+    <section class="bg-white shadow rounded-2xl p-5 space-y-4">
+      <div class="grid md:grid-cols-2 gap-4 items-end">
+        <div>
+          <label class="block text-sm font-medium">Public figure name</label>
+          <input id="personName" type="text" placeholder="e.g., Elon Musk" class="mt-1 w-full rounded-xl border px-3 py-2" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium">Jurisdiction (optional)</label>
+          <input id="jurisdiction" type="text" placeholder="e.g., India, US, EU" class="mt-1 w-full rounded-xl border px-3 py-2" />
+        </div>
+      </div>
+
+      <details class="rounded-xl border p-3">
+        <summary class="cursor-pointer font-medium">Optional: Paste recent headlines/articles (improves currency)</summary>
+        <p class="text-xs text-slate-500 mb-2">Paste 5–20 bullet points or short summaries with dates & sources. Example: “2025-08-20 • SEBI issues notice to … (Economic Times)”.</p>
+        <textarea id="headlines" rows="6" class="w-full rounded-xl border px-3 py-2 mono" placeholder="- 2025-08-25 • … (Reuters)
+- 2025-08-22 • … (Economic Times)"></textarea>
+      </details>
+
+      <div class="flex items-center gap-3">
+        <label class="inline-flex items-center gap-2 text-sm">
+          <input id="useDecay" type="checkbox" class="rounded"/>
+          Use recency decay (τ = 365 days)
+        </label>
+        <label class="inline-flex items-center gap-2 text-sm">
+          <input id="strictSources" type="checkbox" class="rounded" checked />
+          Prioritize credible/official sources
+        </label>
+      </div>
+
+      <button id="runBtn" class="mt-2 inline-flex items-center gap-2 rounded-2xl bg-slate-900 text-white px-4 py-2 hover:bg-slate-800">
+        <span>Compute Risk</span>
+      </button>
+    </section>
+
+    <!-- Results -->
+    <section class="bg-white shadow rounded-2xl p-5 space-y-4">
+      <div id="status" class="text-sm text-slate-500"></div>
+
+      <div id="scoreCard" class="hidden">
+        <div class="flex items-baseline gap-3">
+          <h2 class="text-xl font-semibold">Media Risk Factor</h2>
+          <span id="scoreValue" class="text-3xl font-bold"></span>
+        </div>
+        <p id="scoreAdvice" class="text-sm text-slate-600"></p>
+      </div>
+
+      <div id="topDrivers" class="hidden">
+        <h3 class="font-semibold mt-4">Top Drivers</h3>
+        <ol id="driversList" class="list-decimal ml-5 space-y-2"></ol>
+      </div>
+
+      <div id="eventsWrap" class="hidden">
+        <h3 class="font-semibold mt-4">Extracted Events</h3>
+        <div id="events" class="divide-y"></div>
+      </div>
+
+      <div id="rawJsonWrap" class="hidden">
+        <details>
+          <summary class="cursor-pointer font-medium">Raw JSON (model output)</summary>
+          <pre id="rawJson" class="bg-slate-100 rounded-xl p-3 mono text-xs overflow-auto"></pre>
+        </details>
+      </div>
+    </section>
+
+    <footer class="text-xs text-slate-500 pb-10">
+      This is a demo. Do not make solely automated lending decisions. Keep a human-in-the-loop and verify sources.
+    </footer>
+  </div>
+
+  <script type="module">
+    import { GoogleGenerativeAI } from "https://esm.run/@google/generative-ai";
+
+    // --- UI helpers ---
+    const $ = (id) => document.getElementById(id);
+    const fmt = (n) => Number(n).toFixed(0);
+    const parseDate = (s) => {
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    };
+    const daysBetween = (a, b) => Math.floor((a - b) / (1000*60*60*24));
+
+    // Scoring config (you can tune these)
+    const SEVERITY = { allegation: 20, investigation: 35, charge: 55, conviction: 90, sanction: 75, regulatory_action: 60, civil_penalty: 50 };
+    const SOURCE_TIER = { official: 1.0, tier1: 0.9, tier2: 0.75, unknown: 0.6 };
+    const TAU_DAYS = 270; // decay constant
+
+    function recencyDecay(eventDate, useDecay=true) {
+      if (!useDecay || !eventDate) return 1.0;
+      const delta = daysBetween(new Date(), eventDate);
+      const tau = TAU_DAYS;
+      const R = Math.exp(-Math.max(0, delta) / tau);
+      return R;
+    }
+
+    function eventRisk(e, useDecay=true) {
+      const sev = SEVERITY[e.severity?.toLowerCase()] ?? 25;
+      const tier = SOURCE_TIER[(e.source_tier || 'unknown').toLowerCase()] ?? 0.6;
+      const mat = (typeof e.materiality === 'number') ? Math.max(0, Math.min(1, e.materiality)) : 0.5;
+      const date = parseDate(e.date);
+      const R = recencyDecay(date, useDecay);
+      const ER = sev * tier * R * (0.5 + 0.5 * mat);
+      return Math.min(100, ER);
+    }
+
+    function aggregateMRF(events, useDecay=true) {
+      const er = events.map(e => eventRisk(e, useDecay) / 100);
+      const prod = er.reduce((p, x) => p * (1 - x), 1.0);
+      return Math.round(100 * (1 - prod));
+    }
+
+    function adviceFor(score) {
+      if (score < 40) return "Low: proceed if financials/KYC are clean.";
+      if (score < 70) return "Medium: manual review required; verify at least two independent credible sources.";
+      return "High: hold/decline pending senior & legal review.";
+    }
+
+    function buildPrompt(person, jurisdiction, pastedHeadlines, strictSources) {
+      const nowISO = new Date().toISOString().slice(0,10);
+      const srcPref = strictSources
+        ? "Prioritize official regulator/court press releases and top-tier outlets. Ignore rumors/gossip. If claims are unverified, mark severity=allegation and credibility low."
+        : "Use all sources but flag low-credibility clearly.";
+      const headlinesBlock = pastedHeadlines?.trim()
+        ? `\n\nRecent headlines supplied by user:\n${pastedHeadlines.trim()}`
+        : "";
+
+      return `
+You are an AI risk analyst. Given a public figure's name, extract adverse-media events related to credit/lending risk.
+
+Return STRICT JSON ONLY with this schema:
+{
+  "person": "string",
+  "events": [
+    {
+      "title": "string",
+      "taxonomy": "fraud | corruption | aml | sanctions | litigation | regulatory_action | tax | insolvency | misconduct | reputational | other",
+      "severity": "allegation | investigation | charge | conviction | sanction | regulatory_action | civil_penalty",
+      "source": "string",
+      "source_tier": "official | tier1 | tier2 | unknown",
+      "date": "YYYY-MM-DD",
+      "jurisdiction": "string",
+      "materiality": 0.0-1.0, // impact on credit/reputation; 0=low,1=high
+      "summary": "1-2 sentence factual summary",
+      "url": "string or empty if unknown"
+    }
+  ]
+}
+
+Rules:
+- Today is ${nowISO}. Be conservative and factual. ${srcPref}
+- If the name is ambiguous, pick the most prominent person and mention ambiguity in one 'reputational' event with low materiality.
+- If you are unsure of a date, estimate the month and set day to 01.
+- If no adverse events are found, return an empty "events": [].
+
+Target person: "${person}"
+Jurisdiction focus (optional): "${jurisdiction || ""}"
+${headlinesBlock}
+`.trim();
+    }
+
+    async function callGemini(apiKey, modelName, prompt) {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: modelName, generationConfig: { responseMimeType: "application/json" }});
+      const res = await model.generateContent(prompt);
+      const txt = res.response.text();
+      // Try parsing as JSON, fall back to extracting JSON block
+      try { return JSON.parse(txt); }
+      catch {
+        const match = txt.match(/\{[\s\S]*\}$/);
+        if (match) { try { return JSON.parse(match[0]); } catch {} }
+        throw new Error("Could not parse model JSON. Raw:\n" + txt);
+      }
+    }
+
+    function renderEvents(events) {
+      const wrap = $("events");
+      wrap.innerHTML = "";
+      events.forEach((e, idx) => {
+        const er = eventRisk(e, $("useDecay").checked);
+        const row = document.createElement("div");
+        row.className = "py-3";
+        row.innerHTML = `
+          <div class="flex flex-wrap items-baseline gap-2">
+            <span class="text-sm text-slate-500">#${idx+1}</span>
+            <span class="font-medium">${e.title || "(untitled event)"}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100">${e.taxonomy ?? "other"}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100">severity: ${e.severity ?? "unknown"}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100">tier: ${e.source_tier ?? "unknown"}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100">ER: ${fmt(er)}</span>
+          </div>
+          <div class="text-sm text-slate-700">${e.summary ?? ""}</div>
+          <div class="text-xs text-slate-500">
+            ${e.date ? `Date: ${e.date}` : ""} ${e.jurisdiction ? `• ${e.jurisdiction}` : ""}
+            ${e.source ? `• Source: ${e.source}` : ""}
+            ${e.url ? `• <a href="${e.url}" target="_blank" class="underline">Link</a>` : ""}
+          </div>
+        `;
+        wrap.appendChild(row);
+      });
+      $("eventsWrap").classList.toggle("hidden", events.length === 0);
+    }
+
+    function renderDrivers(events) {
+      const scored = events.map(e => ({ e, er: eventRisk(e, $("useDecay").checked) }))
+                           .sort((a,b) => b.er - a.er)
+                           .slice(0, 3);
+      const list = $("driversList");
+      list.innerHTML = "";
+      scored.forEach(({e, er}) => {
+        const li = document.createElement("li");
+        li.innerHTML = `<span class="font-medium">${e.title || e.taxonomy}</span> — ER ${fmt(er)} • ${e.severity}/${e.source_tier} • ${e.date || "n/a"}`;
+        list.appendChild(li);
+      });
+      $("topDrivers").classList.toggle("hidden", scored.length === 0);
+    }
+
+    function renderScore(score) {
+      $("scoreValue").textContent = score;
+      $("scoreAdvice").textContent = adviceFor(score);
+      $("scoreCard").classList.remove("hidden");
+    }
+
+    async function run() {
+      
+	  const apiKey = config.MY_KEY;
+      const modelName = "gemini-2.0-flash";
+      const person = $("personName").value.trim();
+      const jurisdiction = $("jurisdiction").value.trim();
+      const headlines = $("headlines").value;
+
+      if (!person) { alert("Please enter a public figure’s name."); return; }
+
+      $("status").textContent = "Analyzing with Gemini…";
+      $("runBtn").disabled = true;
+
+      try {
+        const prompt = buildPrompt(person, jurisdiction, headlines, $("strictSources").checked);
+        const json = await callGemini(apiKey, modelName, prompt);
+
+        $("rawJson").textContent = JSON.stringify(json, null, 2);
+        $("rawJsonWrap").classList.remove("hidden");
+
+        const events = Array.isArray(json?.events) ? json.events : [];
+        renderEvents(events);
+        renderDrivers(events);
+
+        const score = aggregateMRF(events, $("useDecay").checked);
+        renderScore(score);
+        $("status").textContent = `Done. Found ${events.length} event(s).`;
+      } catch (err) {
+        console.error(err);
+        $("status").textContent = "Error: " + (err?.message || err);
+      } finally {
+        $("runBtn").disabled = false;
+      }
+    }
+
+    $("runBtn").addEventListener("click", run);
+  </script>
+  <script type='text/javascript' src='../config.js'></script>
+  
+  
+</body>
+</html>
