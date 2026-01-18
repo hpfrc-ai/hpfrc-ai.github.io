@@ -1,0 +1,9 @@
+# Ignore config files
+config.js
+
+# Or if inside a folder
+config/config.js
+src/config.js
+
+# Ignore all config JS files (optional)
+**/config*.js
